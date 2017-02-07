@@ -42,6 +42,7 @@ module.exports = [
     'endLoadingScreen',
     'false',
     'getClientState',
+    'getResolution',
     'grpNull',
     'hasInterface',
     'independent',
