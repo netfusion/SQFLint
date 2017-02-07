@@ -188,7 +188,7 @@ module.exports = [
     'secondaryWeapon',
     'secondaryWeaponItems',
     'secondaryWeaponMagazine',
-    'select',
+    'selectMax',
     'selectPlayer',
     'selectRandom',
     'serverCommandAvailable',
