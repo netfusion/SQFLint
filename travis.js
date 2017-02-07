@@ -34,7 +34,7 @@ const readFilesSync = (dir, filter) => {
 console.log('Validating SQF...');
 
 let errors = 0;
-const files = readFilesSync('../addons', /\.sqf$/);
+const files = readFilesSync('../../addons', /\.sqf$/);
 files.forEach(file => {
     const content = fs.readFileSync(file, 'utf8');
 const tokens = Lexer.lex(content, file);
