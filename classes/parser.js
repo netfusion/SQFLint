@@ -277,6 +277,12 @@ class Parser {
             this.parseCode('outdent');
             this.expect('outdent');
         } else if (this.peek().type != 'right-brace') {
+            if (this.tokens.length > 4 && (this.peek().type == 'command' && this.peek().value == 'private' && this.lookahead(4).type == 'assignment-operator')  // private _variable =
+                || this.lookahead(2).type == 'assignment-operator') { // _variable =
+                this.parseAssignment();
+                this.expect('semicolon');
+                this.expect('space');
+            }
             this.parseExpression();
         }
 
