@@ -27,7 +27,7 @@ class Parser {
     constructor(tokens, filename, content) {
         if (!Array.isArray(tokens)) return console.error('Expected tokens code to be a array but got "' + typeof tokens + '"');
 
-        this.tokens = tokens;
+        this.tokens = tokens.slice();
         this.filename = filename;
         this.content = content;
 
@@ -94,7 +94,11 @@ class Parser {
                 this.parseStatement(scopeTerminator);
             }
 
-            if (this.peek().type != scopeTerminator) this.expect('newline');
+            if (this.peek().type != scopeTerminator || scopeTerminator == 'eos') {
+                if (this.peek().type == 'blank')
+                    this.tokens.shift();
+                this.expect('newline');
+            }
         }
     }
 
@@ -136,7 +140,7 @@ class Parser {
     }
 
     parseExpression() {
-        // expression ::= primaryExpression (((SPACE operator) | COLON | (NEWLINE LOGICAL_OPERATOR)) SPACE expression)?
+        // expression ::= primaryExpression (((SPACE operator) | COLON | (NEWLINE SPACE LOGICAL_OPERATOR)) SPACE expression)?
 
         this.parsePrimaryExpression();
 
@@ -153,6 +157,7 @@ class Parser {
                     break;
                 case 'newline':
                     this.tokens.shift();
+                    this.expect('space');
                     this.expect('logical-operator');
                     break;
             }
@@ -166,7 +171,7 @@ class Parser {
         if (['unary-arithmetic-operator', 'unary-logical-operator', 'macro', 'command', 'variable', 'left-parentheses', 'left-bracket'].indexOf(this.peek().type) >= 0) {
             let lookahead = 1;
             if (['unary-arithmetic-operator', 'unary-logical-operator'].indexOf(this.peek().type) >= 0) lookahead = 2;
-            if (this.lookahead(lookahead).type == 'space' && ['macro', 'command', 'variable', 'left-parentheses', 'left-bracket', 'number', 'string', 'left-brace'].indexOf(this.lookahead(lookahead + 1).type) >= 0)
+            if (this.lookahead(lookahead).type == 'space' && ['macro', 'command', 'variable', 'left-parentheses', 'left-bracket', 'number', 'string', 'left-brace', 'unary-logical-operator'].indexOf(this.lookahead(lookahead + 1).type) >= 0)
                 this.parseUnaryExpression();
             else
                 this.parseNularExpression();
@@ -260,6 +265,7 @@ class Parser {
         // parentheses ::= LPAREN expression RPAREN
 
         this.expect('left-parentheses');
+        if (this.peek().type == 'unary-logical-operator' && this.lookahead(1).type != 'variable') this.error('dump');
         this.parseExpression();
         this.expect('right-parentheses');
     }
@@ -277,13 +283,7 @@ class Parser {
             this.parseCode('outdent');
             this.expect('outdent');
         } else if (this.peek().type != 'right-brace') {
-            if (this.tokens.length > 4 && (this.peek().type == 'command' && this.peek().value == 'private' && this.lookahead(4).type == 'assignment-operator')  // private _variable =
-                || this.lookahead(2).type == 'assignment-operator') { // _variable =
-                this.parseAssignment();
-                this.expect('semicolon');
-                this.expect('space');
-            }
-            this.parseExpression();
+            this.parseStatement('right-brace');
         }
 
         this.expect('right-brace');

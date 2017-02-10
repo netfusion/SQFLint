@@ -23,11 +23,13 @@ class LayoutChecker extends Parser {
     }
 
     check() {
+        this.expect('preprocessor-start');
         const macroInclude = this.expect('preprocessor-include');
         if (macroInclude.value != 'macros.hpp') this.error('Unknown include path: {0}', macroInclude.value);
         this.expect('newline');
         const fileHeader = this.expect('blockComment');
         //console.log(fileHeader);
+        this.expect('blank');
     }
 }
 

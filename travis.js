@@ -44,7 +44,7 @@ files.forEach(file => {
 
     if (tokens[tokens.length - 1].type == 'eos') {
         errors += Parser.parse(tokens, file, content);
-        //errors += Parser.checkLayout(tokens, file, content);
+        errors += Parser.checkLayout(tokens, file, content);
     } else {
         errors++;
     }

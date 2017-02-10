@@ -124,16 +124,18 @@ class Lexer {
             if (/^(\n|$)/.test(newInput)) {
                 this.input = newInput;
                 const token = this.token(type, matches[1]);
-                this.incrementLine(matches[0].split('\n').length - 1);
-                this.incrementColumn(matches[0].length);
+                const lines = matches[0].split('\n');
+                this.incrementLine(lines.length - 1);
+                this.incrementColumn(lines[lines.length - 1].length);
                 return token;
             }
         }
     }
 
     isTokenBlank() {
-        const matches = /^\n[ \t]*\n/.exec(this.input);
+        const matches = /^\n\n/.exec(this.input);
         if (matches) {
+            this.tokens.push(this.token('blank'));
             this.consume(matches[0].length - 1);
             this.incrementLine(1);
             if (this.isTokenBlank()) this.error('Duplicate blank line');
