@@ -88,6 +88,8 @@ class Parser {
                 }
             } else if (['lineComment', 'blockComment'].indexOf(this.peek().type) >= 0) {
                 this.tokens.shift();
+            } else if (this.peek().type == 'macro' && this.lookahead(1).type == 'newline' && this.lookahead(2).type != 'logical-operator') {
+                this.tokens.shift();
             } else {
                 this.parseStatement(scopeTerminator);
             }
