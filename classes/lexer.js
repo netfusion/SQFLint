@@ -60,11 +60,7 @@ class Lexer {
             || this.isTokenEos()
             || this.isTokenIndent()
             || this.isTokenSpace()
-            || this.isTokenInclude()
-            || this.isTokenDefine()
-            || this.isTokenIfDef()
-            || this.isTokenElse()
-            || this.isTokenEndIf()
+            || this.isTokenPreprocessor()
             || this.isTokenLineComment()
             || this.isTokenBlockComment()
             || this.isTokenMacro()
@@ -80,10 +76,14 @@ class Lexer {
             || this.isTokenClosingParentheses()
             || this.isTokenOpenBracket()
             || this.isTokenClosingBracket()
+            || this.isTokenConfigOperator()
+            || this.isTokenUnaryArithmeticOperator()
+            || this.isTokenArithmeticOperator()
+            || this.isTokenComparisonOperator()
             || this.isTokenAssignment()
-            || this.isTokenOperator()
-            || this.isTokenColon()
             || this.isTokenNegation()
+            || this.isTokenLogicalOperator()
+            || this.isTokenColon()
             || this.fail();
     }
 
@@ -136,6 +136,7 @@ class Lexer {
         if (matches) {
             this.consume(matches[0].length - 1);
             this.incrementLine(1);
+            if (this.isTokenBlank()) this.error('Duplicate blank line');
             return true;
         }
     }
@@ -179,48 +180,56 @@ class Lexer {
         }
     }
 
-    isTokenSpace() {
-        const token = this.scan(/^ /, 'space');
+    isTokenPreprocessor() {
+        const token = this.scan(/^#/, 'preprocessor-start');
         if (token) {
             this.tokens.push(token);
-            return true;
+            return this.isTokenInclude()
+            || this.isTokenDefine()
+            || this.isTokenUndefine()
+            || this.isTokenIfDef()
+            || this.isTokenElse()
+            || this.isTokenEndIf()
+            || this.fail();
         }
     }
-
     isTokenInclude() {
-        const token = this.scanEndOfLine(/^#include "(.*)"/, 'include');
+        const token = this.scanEndOfLine(/^include "(.*)"/, 'preprocessor-include');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
     isTokenDefine() {
-        const token = this.scanEndOfLine(/^#define ([A-Z][A-Z_]*) .+/, 'define');
+        const token = this.scanEndOfLine(/^define ([A-Z][A-Z_]*) .+/, 'preprocessor-define');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
+    isTokenUndefine() {
+        const token = this.scanEndOfLine(/^undef ([A-Z][A-Z_]*)/, 'preprocessor-undefine');
+        if (token) {
+            this.tokens.push(token);
+            return true;
+        }
+    }
     isTokenIfDef() {
-        const token = this.scanEndOfLine(/^#ifn?def ([A-Z][A-Z_]*)/, 'ifDef');
+        const token = this.scanEndOfLine(/^ifn?def ([A-Z][A-Z_]*)/, 'preprocessor-if');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
     isTokenElse() {
-        const token = this.scanEndOfLine(/^#else/, 'else');
+        const token = this.scanEndOfLine(/^else/, 'preprocessor-else');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
     isTokenEndIf() {
-        const token = this.scanEndOfLine(/^#endif/, 'endIf');
+        const token = this.scanEndOfLine(/^endif/, 'preprocessor-endIf');
         if (token) {
             this.tokens.push(token);
             return true;
@@ -228,15 +237,14 @@ class Lexer {
     }
 
     isTokenLineComment() {
-        const token = this.scanEndOfLine(/^ ?\/\/([^\n]*)/, 'lineComment');
+        const token = this.scanEndOfLine(/^\/\/([^\n]*)/, 'lineComment');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
     isTokenBlockComment() {
-        const token = this.scanEndOfLine(/^\/\*[\s\S]*?\*\//, 'blockComment');
+        const token = this.scanEndOfLine(/^\/\*([\s\S]*?)\*\//, 'blockComment');
         if (token) {
             this.tokens.push(token);
             return true;
@@ -282,14 +290,13 @@ class Lexer {
     }
 
     isTokenCommand() {
-        const token = this.scan(/^(([a-z]|A(G|S|T)LTo)[a-zA-Z0-9_]*)/, 'command');
+        const token = this.scan(/^(([a-z]|A(G|S|T)LTo)[a-zA-Z0-9_]*[a-zA-Z0-9])/, 'command');
         if (token && token.value.indexOf('_fnc_') == -1) {
             this.tokens.push(token);
             this.incrementColumn(token.value.length);
             return true;
         }
     }
-
     isTokenVariable() {
         const token = this.scan(/^(_?[a-zA-Z][a-zA-Z0-9_]*)/, 'variable');
         if (token) {
@@ -298,7 +305,6 @@ class Lexer {
             return true;
         }
     }
-
     isTokenString() {
         const token = this.scan(/^"(([^"]|"")*)"/, 'string');
         if (token) {
@@ -308,7 +314,6 @@ class Lexer {
             return true;
         }
     }
-
     isTokenNumber() {
         const token = this.scan(/^(-?((\d+(\.|e)?\d*)|(0x[0-9A-F]+)))(?![a-z])/, 'number');
         if (token) {
@@ -319,31 +324,14 @@ class Lexer {
     }
 
     isTokenArrayStart() {
-        const token = this.scan(/^\[/, 'arrayStart');
+        const token = this.scan(/^\[/, 'left-bracket');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
-    isTokenArraySeparator() {
-        const token = this.scan(/^,/, 'arraySeparator');
-        if (token) {
-            this.tokens.push(token);
-            return true;
-        }
-    }
-
     isTokenArrayEnd() {
-        const token = this.scan(/^]/, 'arrayEnd');
-        if (token) {
-            this.tokens.push(token);
-            return true;
-        }
-    }
-
-    isTokenSemicolon() {
-        const token = this.scan(/^;/, 'semicolon');
+        const token = this.scan(/^]/, 'right-bracket');
         if (token) {
             this.tokens.push(token);
             return true;
@@ -351,15 +339,14 @@ class Lexer {
     }
 
     isTokenOpenParentheses() {
-        const token = this.scan(/^\(/, 'openParentheses');
+        const token = this.scan(/^\(/, 'left-parentheses');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
     isTokenClosingParentheses() {
-        const token = this.scan(/^\)/, 'closingParentheses');
+        const token = this.scan(/^\)/, 'right-parentheses');
         if (token) {
             this.tokens.push(token);
             return true;
@@ -367,15 +354,14 @@ class Lexer {
     }
 
     isTokenOpenBracket() {
-        const token = this.scan(/^\{/, 'openBracket');
+        const token = this.scan(/^\{/, 'left-brace');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
     isTokenClosingBracket() {
-        const token = this.scan(/^}/, 'closingBracket');
+        const token = this.scan(/^}/, 'right-brace');
         if (token) {
             this.tokens.push(token);
             return true;
@@ -383,15 +369,52 @@ class Lexer {
     }
 
     isTokenAssignment() {
-        const token = this.scan(/^= /, 'assignment');
+        const token = this.scan(/^=/, 'assignment-operator');
         if (token) {
             this.tokens.push(token);
             return true;
         }
     }
-
-    isTokenOperator() {
-        const token = this.scan(/^((>>|==|!=|>=|<=|>|<|\|\||&&|\+|-|\*|\/|\^|%)(?=\s)|\+|-)/, 'operator');
+    isTokenConfigOperator() {
+        const token = this.scan(/^>>/, 'config-operator');
+        if (token) {
+            this.tokens.push(token);
+            return true;
+        }
+    }
+    isTokenUnaryArithmeticOperator() {
+        const token = this.scan(/^(\+|-)/, 'unary-arithmetic-operator');
+        if (token) {
+            this.tokens.push(token);
+            this.incrementColumn(token.value.length);
+            return true;
+        }
+    }
+    isTokenArithmeticOperator() {
+        const token = this.scan(/^(\*|\/|\^|%)/, 'arithmetic-operator');
+        if (token) {
+            this.tokens.push(token);
+            this.incrementColumn(token.value.length);
+            return true;
+        }
+    }
+    isTokenNegation() {
+        const token = this.scan(/^!/, 'unary-logical-operator');
+        if (token) {
+            this.tokens.push(token);
+            return true;
+        }
+    }
+    isTokenLogicalOperator() {
+        const token = this.scan(/^(\|\||&&)/, 'logical-operator');
+        if (token) {
+            this.tokens.push(token);
+            this.incrementColumn(token.value.length);
+            return true;
+        }
+    }
+    isTokenComparisonOperator() {
+        const token = this.scan(/^(==|!=|>=|<=|>|<)/, 'comparison-operator');
         if (token) {
             this.tokens.push(token);
             this.incrementColumn(token.value.length);
@@ -399,6 +422,20 @@ class Lexer {
         }
     }
 
+    isTokenArraySeparator() {
+        const token = this.scan(/^,/, 'comma');
+        if (token) {
+            this.tokens.push(token);
+            return true;
+        }
+    }
+    isTokenSemicolon() {
+        const token = this.scan(/^;/, 'semicolon');
+        if (token) {
+            this.tokens.push(token);
+            return true;
+        }
+    }
     isTokenColon() {
         const token = this.scan(/^:/, 'colon');
         if (token) {
@@ -406,11 +443,11 @@ class Lexer {
             return true;
         }
     }
-
-    isTokenNegation() {
-        const token = this.scan(/^!/, 'negation');
+    isTokenSpace() {
+        const token = this.scan(/^ /, 'space');
         if (token) {
             this.tokens.push(token);
+            if (this.isTokenSpace()) this.error('Duplicate space');
             return true;
         }
     }

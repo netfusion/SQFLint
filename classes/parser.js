@@ -1,15 +1,16 @@
 /*
-    DO NOT USE WITHOUT EXCLUSIVE PERMISSION
+ DO NOT USE WITHOUT EXCLUSIVE PERMISSION
 
-    SQFLint
-    Author: NetFusion
-    https://github.com/netfusion/SQFLint
+ SQFLint
+ Author: NetFusion
+ https://github.com/netfusion/SQFLint
 
-    Description:
-    Parser class for SQFLint
-*/
+ Description:
+ Parser class for SQFLint
+ */
 
 const Error = require('./error');
+const Token = require('./token');
 
 class Parser {
     static parse(tokens, filename, content) {
@@ -17,7 +18,8 @@ class Parser {
         try {
             parser.parseCode('eos');
         } catch (e) {
-            return 1;
+            if (e instanceof Error) return 1;
+            throw e;
         }
         return 0;
     }
@@ -28,8 +30,6 @@ class Parser {
         this.tokens = tokens;
         this.filename = filename;
         this.content = content;
-
-        this.requireSemicolon = true;
 
         this.nularCommands = require('./../lang/nular-commands');
         this.unaryCommands = require('./../lang/unary-commands');
@@ -48,267 +48,237 @@ class Parser {
     }
 
     lookahead(n) {
-        return this.tokens[n];
+        return this.tokens[n] || new Token('eos');
     }
 
-    expect(type) {
-        if (this.peek().type == type) return this.tokens.shift();
-        this.error('Expected {0} but got {1}', type, this.peek().type);
+    expect(types) {
+        if (!Array.isArray(types)) types = [types];
+        if (types.indexOf(this.peek().type) >= 0) return this.tokens.shift();
+        this.error('Expected {0} but got {1}', types.join(', '), this.peek().type);
     }
 
-    parseCode(terminator, indented = false) {
-        this.parseNonCode();
-        if (this.peek().type == terminator) return; // Empty
-        this.parseStatement();
-        while (this.peek().type != terminator) {
-            if (this.peek().type == 'space' && this.lookahead(1).type == 'lineComment') {
-                this.expect('space');
-                this.expect('lineComment');
-            }
-            if (indented && this.peek().type == 'outdent') { // Return value without semicolon
-                this.requireSemicolon = true;
-                this.expect('outdent');
-                break;
-            } else if (this.peek().type == 'newline' && this.lookahead(1).type == 'eos') { // Empty line at end of file
-                break;
-            }
-            this.parseSemicolon();
-            if (this.peek().type == 'outdent' && indented) { // No return value
-                this.expect('outdent');
-                break;
+    parseCode(scopeTerminator) {
+        // code ::= ((commentFullLine | preprocessor | statement | macro) NEWLINE)*
+
+        while (this.peek().type != scopeTerminator) {
+            if (this.peek().type == 'preprocessor-start') {
+                this.tokens.shift();
+                switch (this.peek().type) {
+                    case 'preprocessor-include':
+                    case 'preprocessor-define':
+                        this.tokens.shift();
+                        break;
+                    case 'preprocessor-if':
+                        this.tokens.shift();
+                        this.expect('indent');
+                        this.parseCode('outdent');
+                        this.expect('outdent');
+                        this.expect('preprocessor-start');
+                        if (this.peek().type == 'preprocessor-else') {
+                            this.tokens.shift();
+                            this.expect('indent');
+                            this.parseCode('outdent');
+                            this.expect('outdent');
+                            this.expect('preprocessor-start');
+                        }
+                        this.expect('preprocessor-endIf');
+                        break;
+                    default:
+                        this.error('Unexpected preprocessor command: {0}', this.peek().type);
+                }
+            } else if (['lineComment', 'blockComment'].indexOf(this.peek().type) >= 0) {
+                this.tokens.shift();
+            } else {
+                this.parseStatement(scopeTerminator);
             }
 
-            this.parseNonCode();
-            if (this.peek().type != terminator)
-                this.parseStatement();
-        }
-
-        if (this.peek().type == 'outdent' && indented) this.expect('outdent');
-    }
-
-    parseNonCode() {
-        while (['include', 'lineComment', 'blockComment'].indexOf(this.peek().type) > -1) {
-            switch (this.peek().type) {
-                case 'include':
-                    this.expect('include');
-                    break;
-                case 'lineComment':
-                    this.expect('lineComment');
-                    break;
-                case 'blockComment':
-                    this.expect('blockComment');
-                    break;
-            }
-            if (this.peek().type == 'outdent') {
-                this.expect('outdent');
-                break;
-            }
-            this.expect('newline');
+            if (this.peek().type != scopeTerminator) this.expect('newline');
         }
     }
 
-    parseStatement() {
-        if (this.tokens.length > 4
-            && (this.peek().type == 'command' && this.peek().value == 'private' && this.lookahead(4).type == 'assignment')  // private _variable =
-            || ((this.peek().type == 'variable' || this.peek().type == 'macro') && this.lookahead(2).type == 'assignment')  // _variable =
-        )
+    parseStatement(scopeTerminator) {
+        // statement ::= (assignStatement | expression) SEMICOLON commentEndOfLine?
+
+        if (this.tokens.length > 4 && (this.peek().type == 'command' && this.peek().value == 'private' && this.lookahead(4).type == 'assignment-operator')  // private _variable =
+            || this.lookahead(2).type == 'assignment-operator') // _variable =
             this.parseAssignment();
         else
-            this.parseBinaryExpression();
-    }
+            this.parseExpression();
 
+        if (['space', scopeTerminator].indexOf(this.peek().type) >= 0 || (scopeTerminator == 'eos' && this.lookahead(1).type == 'eos' && this.peek().type == 'newline')) {
+            if (this.peek().type == 'space') {
+                this.tokens.shift();
+                this.expect('lineComment');
+            }
+            return;
+        }
+
+        this.expect('semicolon');
+        if (this.peek().type == 'space') {
+            this.tokens.shift();
+            this.expect('lineComment');
+        }
+    }
     parseAssignment() {
+        // assignStatement ::= (COMMAND_PRIVATE SPACE)? (macroCall | VARIABLE) SPACE ASSIGNMENT_OPERATOR SPACE expression
+
         if (this.peek().type == 'command' && this.peek().value == 'private') {
-            this.expect('command');
+            this.tokens.shift();
             this.expect('space');
         }
-
-        if (this.peek().type == 'macro') {
-            this.expect('macro');
-        } else {
-            this.expect('variable');
-        }
+        this.expect(['macro', 'variable']);
         this.expect('space');
-        this.expect('assignment');
-        this.parseBinaryExpression();
+        this.expect('assignment-operator');
+        this.expect('space');
+        this.parseExpression();
     }
 
-    parseBinaryExpression() {
-        if (this.peek().type == 'operator' && ['+', '-'].indexOf(this.peek().value) > -1) // Create copy of array or negate expression
-            this.expect('operator');
+    parseExpression() {
+        // expression ::= primaryExpression (((SPACE operator) | COLON | (NEWLINE LOGICAL_OPERATOR)) SPACE expression)?
 
         this.parsePrimaryExpression();
 
-        if (this.tokens.length > 2 && this.peek().type == 'newline' && this.lookahead(2).type == 'operator' && ['&&', '||'].indexOf(this.lookahead(2).value) > -1) {
-            this.expect('newline');
-        }
-
-        if (this.peek().type == 'space' && this.lookahead(1).type != 'lineComment') {
+        if (this.peek().type == 'colon'
+            || (this.lookahead(1).type != 'eos' && this.peek().type == 'newline')
+            || (this.lookahead(1).type != 'lineComment' && this.peek().type == 'space')) {
+            switch (this.peek().type) {
+                case 'space':
+                    this.tokens.shift();
+                    this.parseOperator();
+                    break;
+                case 'colon':
+                    this.tokens.shift();
+                    break;
+                case 'newline':
+                    this.tokens.shift();
+                    this.expect('logical-operator');
+                    break;
+            }
             this.expect('space');
-            this.parseOperator();
-            this.expect('space');
-            this.parseBinaryExpression();
-        }
-
-        if (this.peek().type == 'colon') { // Only inside do
-            this.expect('colon');
-            this.expect('space');
-            this.parseBinaryExpression();
+            this.parseExpression();
         }
     }
-
     parsePrimaryExpression() {
-        if (this.peek().type == 'negation')
-            this.expect('negation');
+        // primaryExpression ::= unaryExpression | nularExpression | NUMBER | STRING | braces
 
-        //noinspection FallThroughInSwitchStatementJS
-        switch (this.peek().type) {
-            case 'define':
-                this.requireSemicolon = false;
-                return this.expect('define');
-            case 'ifDef':
-                this.expect('ifDef');
-                this.expect('indent');
-                this.parseCode('outdent', true);
-                if (this.peek().type == 'else') {
-                    this.expect('else');
-                    this.expect('indent');
-                    this.parseCode('outdent', true);
-                }
-                this.requireSemicolon = false;
-                return this.expect('endIf');
-            case 'macro':
-                if (this.tokens.length > 2 && this.lookahead(1).type == 'space' && this.lookahead(2).type == 'variable') return this.parseUnaryExpression();
-                const token = this.expect('macro');
-                if (token.value[token.value.length - 1] != ')' && this.peek().type == 'newline') this.requireSemicolon = false;
-                return;
-            case 'command':
-                if (this.nularCommands.indexOf(this.peek().value) > -1) return this.parseNularExpression();
-                if (this.unaryCommands.indexOf(this.peek().value) > -1) return this.parseUnaryExpression();
-                this.error('Wrong argument count for command: {0}', this.peek().value);
-            case 'number':
-            case 'variable':
-            case 'string':
-                return this.expect(this.peek().type);
-            case 'openBracket':
-                return this.parseOpenBracket();
-            case 'openParentheses':
-                return this.parseOpenParentheses();
-            case 'arrayStart':
-                return this.parseArray();
-            default: this.error('Unexpected token in expression: {0}', this.peek().type);
+        if (['unary-arithmetic-operator', 'unary-logical-operator', 'macro', 'command', 'variable', 'left-parentheses', 'left-bracket'].indexOf(this.peek().type) >= 0) {
+            let lookahead = 1;
+            if (['unary-arithmetic-operator', 'unary-logical-operator'].indexOf(this.peek().type) >= 0) lookahead = 2;
+            if (this.lookahead(lookahead).type == 'space' && ['macro', 'command', 'variable', 'left-parentheses', 'left-bracket', 'number', 'string', 'left-brace'].indexOf(this.lookahead(lookahead + 1).type) >= 0)
+                this.parseUnaryExpression();
+            else
+                this.parseNularExpression();
+        } else if (['number', 'string'].indexOf(this.peek().type) >= 0) {
+            this.tokens.shift();
+        } else if (this.peek().type == 'left-brace') {
+            this.parseBraces();
+        } else {
+            this.error('Unexpected token in primary expression: {0}', this.peek().type);
         }
     }
-
     parseUnaryExpression() {
-        this.parseOperator();
+        // unaryExpression ::= nularExpression SPACE primaryExpression
+
+        this.parseNularExpression();
         this.expect('space');
         this.parsePrimaryExpression();
     }
-
     parseNularExpression() {
-        this.parseOperator();
+        // nularExpression ::= (UNARY_ARITHMETIC_OPERATOR | UNARY_LOGICAL_OPERATOR)? (macro | command | VARIABLE | parentheses | array)
+
+        if (['unary-logical-operator', 'unary-arithmetic-operator'].indexOf(this.peek().type) >= 0) {
+            this.expect(this.peek().type);
+        }
+
+        switch (this.peek().type) {
+            case 'macro':
+            case 'command':
+            case 'variable':
+                this.tokens.shift();
+                break;
+            case 'left-parentheses':
+                this.parseParentheses();
+                break;
+            case 'left-bracket':
+                this.parseArray();
+                break;
+            default:
+                this.error('Unexpected token in nular expression: {0}', this.peek().type);
+        }
     }
 
     parseOperator() {
-        if (this.peek().type == 'macro') {
-            return this.expect('macro');
-        } else if (this.peek().type == 'command') {
-            return this.expect('command');
-        } else if (this.peek().type == 'operator') {
-            return this.expect('operator');
-        }
+        // operator ::= command | CONFIG_OPERATOR | UNARY_ARITHMETIC_OPERATOR | ARITHMETIC_OPERATOR | LOGICAL_OPERATOR | COMPARISON_OPERATOR
 
-        this.error('Unexpected token as operator: {0}', this.peek().type);
+        this.expect(['command', 'config-operator', 'unary-arithmetic-operator', 'arithmetic-operator', 'logical-operator', 'comparison-operator']);
+
     }
 
     parseArray() {
-        this.expect('arrayStart');
+        // LBRACKET (
+        //     (expression (COMMA SPACE expression)*) |
+        //     (INDENT expression (COMMA ((commentEndOfLine? NEWLINE) | SPACE) expression)* commentEndOfLine? OUTDENT)
+        // )? RBRACKET
 
-        let indented = false;
-        if (this.peek().type != 'arrayEnd') {
-            if (this.peek().type == 'indent') {
-                indented = true;
-                this.expect('indent');
-            }
+        this.expect('left-bracket');
 
-            this.parseBinaryExpression();
-            while (this.peek().type == 'arraySeparator') {
-                this.expect('arraySeparator');
-                if (indented && this.lookahead(1).type == 'lineComment') {
-                    this.expect('space');
-                    this.expect('lineComment');
-                    this.expect('newline');
-                } else if (this.peek().type == 'space') {
-                    this.expect('space');
-                } else if (indented) {
+        if (this.peek().type == 'indent') {
+            this.tokens.shift();
+            this.parseExpression();
+            while (this.peek().type == 'comma') {
+                this.tokens.shift();
+                if (this.peek().type == 'space' && this.lookahead(1).type != 'lineComment') {
+                    this.tokens.shift();
+                } else {
+                    if (this.peek().type == 'space') {
+                        this.tokens.shift();
+                        this.expect('lineComment');
+                    }
                     this.expect('newline');
                 }
-
-                this.parseBinaryExpression();
+                this.parseExpression();
             }
-
-            if (indented && this.lookahead(1).type == 'lineComment') {
-                this.expect('space');
+            if (this.peek().type == 'space') {
+                this.tokens.shift();
                 this.expect('lineComment');
             }
-        }
-
-        if (indented) this.expect('outdent');
-        this.expect('arrayEnd');
-    }
-
-    parseSemicolon() {
-        if (!this.requireSemicolon) {
-            this.expect('newline');
-            this.requireSemicolon = true;
-            return;
-        }
-        this.expect('semicolon');
-
-        switch (this.peek().type) {
-            case 'outdent':
-                // Handled by parseCode
-                break;
-            case 'space':
+            this.expect('outdent');
+        } else if (this.peek().type != 'right-bracket') {
+            this.parseExpression();
+            while (this.peek().type == 'comma') {
+                this.tokens.shift();
                 this.expect('space');
-                if (this.peek().type == 'lineComment') this.expect('lineComment');
-                if (this.peek().type == 'newline') this.expect('newline');
-                if (this.peek().type == 'outdent') return; // Handled by parseCode
-                break;
-            case 'newline':
-                this.expect('newline');
-                break;
-            default:
-                this.error('Unexpected token after semicolon: {0}', this.peek().type);
+                this.parseExpression();
+            }
         }
+
+        this.expect('right-bracket');
     }
+    parseParentheses() {
+        // parentheses ::= LPAREN expression RPAREN
 
-    parseOpenParentheses() {
-        this.expect('openParentheses');
-        this.parseBinaryExpression();
-        this.expect('closingParentheses');
+        this.expect('left-parentheses');
+        this.parseExpression();
+        this.expect('right-parentheses');
     }
+    parseBraces() {
+        // braces ::= LBRACE ((commentEndOfLine? INDENT code returnStatement OUTDENT) | ((statement SPACE)* expression))? RBRACE
 
-    parseOpenBracket() {
-        this.expect('openBracket');
-
+        this.expect('left-brace');
         if (this.peek().type == 'space') {
-            this.expect('space');
+            this.tokens.shift();
             this.expect('lineComment');
         }
 
-        let indented = false;
-        if (this.peek().type != 'closingBracket') {
-            if (this.peek().type == 'indent') {
-                indented = true;
-                this.expect('indent');
-            }
-
-            this.parseCode('closingBracket', indented);
+        if (this.peek().type == 'indent') {
+            this.tokens.shift();
+            this.parseCode('outdent');
+            this.expect('outdent');
+        } else if (this.peek().type != 'right-brace') {
+            this.parseExpression();
         }
 
-        this.expect('closingBracket');
+        this.expect('right-brace');
     }
 }
 
