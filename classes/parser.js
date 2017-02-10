@@ -88,7 +88,7 @@ class Parser {
                 }
             } else if (['lineComment', 'blockComment'].indexOf(this.peek().type) >= 0) {
                 this.tokens.shift();
-            } else if (this.peek().type == 'macro' && this.lookahead(1).type == 'newline' && this.lookahead(2).type != 'logical-operator') {
+            } else if (this.peek().type == 'macro' && (this.lookahead(1).type == 'newline' && this.lookahead(2).type != 'logical-operator') || this.lookahead(1).type == 'blank') {
                 this.tokens.shift();
             } else {
                 this.parseStatement(scopeTerminator);
@@ -265,7 +265,6 @@ class Parser {
         // parentheses ::= LPAREN expression RPAREN
 
         this.expect('left-parentheses');
-        if (this.peek().type == 'unary-logical-operator' && this.lookahead(1).type != 'variable') this.error('dump');
         this.parseExpression();
         this.expect('right-parentheses');
     }
@@ -283,7 +282,13 @@ class Parser {
             this.parseCode('outdent');
             this.expect('outdent');
         } else if (this.peek().type != 'right-brace') {
-            this.parseStatement('right-brace');
+            //while (this.peek().type != 'right-brace') {
+            do {
+                if (this.lookahead(2).type == 'assignment-operator')
+                    this.parseAssignment();
+                else
+                    this.parseExpression();
+            } while (this.peek().type == 'semicolon' && this.tokens.shift() && this.expect('space'));
         }
 
         this.expect('right-brace');
