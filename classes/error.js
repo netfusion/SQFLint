@@ -22,7 +22,7 @@ class Error {
             lines = lines.slice(startLine, endLine);
             const context = lines.map((line, index) => {
                 const currentLineNumber = index + startLine + 1;
-                const preamble = (currentLineNumber == lineNumber ? '  > ' : '    ') + currentLineNumber + '| ';
+                const preamble = (currentLineNumber == lineNumber ? '  > ' : '    ') + ("  " + currentLineNumber).substr(-3) + '| ';
                 let output = preamble + line;
                 if (currentLineNumber == lineNumber && columnNumber > 0) {
                     output += os.EOL;

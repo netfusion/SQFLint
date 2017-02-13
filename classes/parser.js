@@ -51,10 +51,10 @@ class Parser {
         return this.tokens[n] || new Token('eos');
     }
 
-    expect(types) {
+    expect(types, errorMessage) {
         if (!Array.isArray(types)) types = [types];
         if (types.indexOf(this.peek().type) >= 0) return this.tokens.shift();
-        this.error('Expected {0} but got {1}', types.join(', '), this.peek().type);
+        this.error(errorMessage || 'Expected {0} but got {1}', types.join(', '), this.peek().type);
     }
 
     parseCode(scopeTerminator) {
@@ -140,17 +140,27 @@ class Parser {
     }
 
     parseExpression() {
-        // expression ::= primaryExpression (((SPACE operator) | COLON | (NEWLINE SPACE LOGICAL_OPERATOR)) SPACE expression)?
+        // expression ::= primaryExpression (((SPACE operator) | COLON | (commentEndOfLine? NEWLINE SPACE LOGICAL_OPERATOR)) SPACE expression)?
 
         this.parsePrimaryExpression();
 
         if (this.peek().type == 'colon'
             || (this.lookahead(1).type != 'eos' && this.peek().type == 'newline')
-            || (this.lookahead(1).type != 'lineComment' && this.peek().type == 'space')) {
+            || (this.peek().type == 'space' && (this.lookahead(1).type != 'lineComment'
+                                                || (this.lookahead(2).type == 'newline'
+                                                    && this.lookahead(3).type == 'space'
+                                                    && this.lookahead(4).type == 'logical-operator')))) {
             switch (this.peek().type) {
                 case 'space':
                     this.tokens.shift();
-                    this.parseOperator();
+                    if (this.peek().type == 'lineComment') {
+                        this.tokens.shift();
+                        this.expect('newline');
+                        this.expect('space');
+                        this.expect('logical-operator');
+                    } else {
+                        this.parseOperator();
+                    }
                     break;
                 case 'colon':
                     this.tokens.shift();
